@@ -12,6 +12,10 @@ Recréation du mini-jeu **Tanks!** de Wii Play, jouable dans le navigateur — e
 
 Pour jouer en ligne, un joueur clique sur **Créer une partie en ligne** et donne le code de 5 lettres aux autres, qui cliquent sur **Rejoindre une partie**. La connexion se fait directement entre navigateurs (WebRTC via [PeerJS](https://peerjs.com/)), sans serveur de jeu.
 
+## Plein écran
+
+Le jeu occupe toute la fenêtre : l'arène s'élargit (ou s'allonge) selon la forme de l'écran, chaque mission restant centrée avec du terrain jouable autour. En ligne, c'est la fenêtre de l'hôte qui fixe la taille de l'arène. Touche **F** pour le plein écran.
+
 ## Commandes
 
 | Action | Touche |
@@ -21,6 +25,7 @@ Pour jouer en ligne, un joueur clique sur **Créer une partie en ligne** et donn
 | Tirer | clic gauche |
 | Poser une mine | clic droit / Espace |
 | Couper le son | M |
+| Plein écran | F |
 | Pause (solo) | P / Échap |
 
 ## Chars ennemis

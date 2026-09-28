@@ -5,11 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tanks!</title>
 <style>
-  html,body{margin:0;height:100%;background:#1b1611;overflow:hidden}
-  #wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-  #stage{position:relative}
-  canvas{display:block;border-radius:8px;box-shadow:0 12px 50px rgba(0,0,0,.65);cursor:none}
-  #ui{position:absolute;left:0;top:0;pointer-events:none;overflow:hidden}
+  html,body{margin:0;height:100%;background:#2a1b0f;overflow:hidden}
+  canvas{position:fixed;left:0;top:0;display:block;cursor:none}
+  #ui{position:fixed;inset:0;pointer-events:none;overflow:hidden}
   #uiInner{position:absolute;left:0;top:0;width:880px;height:732px;transform-origin:0 0;font-family:"Trebuchet MS",Verdana,sans-serif;color:#f6ead2}
   .screen{display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;padding-top:150px;box-sizing:border-box}
   .screen.on{display:flex}
@@ -46,8 +44,7 @@
 </style>
 </head>
 <body>
-<div id="wrap"><div id="stage">
-  <canvas id="game"></canvas>
+<canvas id="game"></canvas>
   <div id="ui"><div id="uiInner">
     <div class="screen" id="scrMain">
       <div class="panel">
@@ -56,8 +53,9 @@
         <button id="btnSolo">Solo — Campagne</button>
         <button id="btnHost">Créer une partie en ligne</button>
         <button id="btnJoin">Rejoindre une partie</button>
+        <button class="sec" id="btnFull">Plein écran (F)</button>
         <p class="status" id="mainStatus"></p>
-        <p class="hint">ZQSD / WASD : se déplacer · Souris : viser · Clic : tirer<br>Clic droit / Espace : mine · M : son · P : pause (solo)</p>
+        <p class="hint">ZQSD / WASD : se déplacer · Souris : viser · Clic : tirer<br>Clic droit / Espace : mine · M : son · P : pause (solo) · F : plein écran</p>
       </div>
     </div>
     <div class="screen" id="scrJoin">
@@ -83,32 +81,52 @@
       </div>
     </div>
   </div></div>
-</div></div>
 <script>
 'use strict';
 // ============================================================
 //  TANKS!  —  recréation du mini-jeu de Wii Play, avec multijoueur en ligne
 // ============================================================
-const COLS = 22, ROWS = 17, T = 40, AW = COLS * T, AH = ROWS * T, HUD = 52, CW = AW, CH = AH + HUD;
+// Les missions sont dessinées sur une grille de base 22 x 17, centrée dans une arène
+// qui s'élargit (ou s'allonge) pour remplir la fenêtre avec du terrain jouable.
+const T = 40, HUD = 52, BASE_C = 22, BASE_R = 17, MAX_C = 44, MAX_R = 30;
+const FRAME_W = 880, FRAME_H = 732; // cadre de conception des menus
+let COLS = BASE_C, ROWS = BASE_R, AW = COLS * T, AH = ROWS * T, CW = AW, CH = AH + HUD;
+let OX = 0, OY = 0;                  // décalage (en cases) de la carte de base dans l'arène
 const TAU = Math.PI * 2;
 const cv = document.getElementById('game'), ctx = cv.getContext('2d');
-const stage = document.getElementById('stage'), uiBox = document.getElementById('ui'), uiInner = document.getElementById('uiInner');
-let scale = 1;
-function resize() {
-  const s = Math.min(innerWidth / CW, innerHeight / CH) * 0.97;
-  const dpr = window.devicePixelRatio || 1;
-  const w = Math.floor(CW * s), h = Math.floor(CH * s);
-  cv.style.width = w + 'px'; cv.style.height = h + 'px';
-  stage.style.width = w + 'px'; stage.style.height = h + 'px';
-  uiBox.style.width = w + 'px'; uiBox.style.height = h + 'px';
-  uiInner.style.transform = `scale(${w / CW})`;
-  cv.width = Math.floor(CW * s * dpr); cv.height = Math.floor(CH * s * dpr);
-  scale = cv.width / CW;
-}
-addEventListener('resize', resize); resize();
+const uiInner = document.getElementById('uiInner');
+const view = { s: 1, x: 0, y: 0, dpr: 1 };   // cadrage de l'arène dans le canvas
+const frame = { s: 1, x: 0, y: 0 };          // cadrage des menus (en pixels CSS)
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+// taille d'arène (en cases) qui épouse au mieux la forme de la fenêtre
+function arenaDimsFor(w, h) {
+  if (!(w > 0 && h > 0)) return { cols: COLS, rows: ROWS }; // fenêtre pas encore visible
+  let rows = BASE_R, cols = Math.round((rows * T + HUD) * (w / h) / T);
+  if (cols < BASE_C) { cols = BASE_C; rows = Math.round((cols * T * h / w - HUD) / T); }
+  cols = clamp(cols, BASE_C, MAX_C); rows = clamp(rows, BASE_R, MAX_R);
+  cols -= (cols - BASE_C) % 2; rows -= (rows - BASE_R) % 2; // marges identiques des deux côtés
+  return { cols, rows };
+}
+function layout() {
+  view.s = Math.max(1e-3, Math.min(cv.width / CW, cv.height / CH));
+  view.x = (cv.width - CW * view.s) / 2;
+  view.y = (cv.height - CH * view.s) / 2;
+}
+function resize() {
+  view.dpr = window.devicePixelRatio || 1;
+  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+  cv.width = Math.floor(innerWidth * view.dpr); cv.height = Math.floor(innerHeight * view.dpr);
+  frame.s = Math.max(1e-3, Math.min(innerWidth / FRAME_W, innerHeight / FRAME_H));
+  frame.x = (innerWidth - FRAME_W * frame.s) / 2; frame.y = (innerHeight - FRAME_H * frame.s) / 2;
+  uiInner.style.transform = `translate(${frame.x}px,${frame.y}px) scale(${frame.s})`;
+  layout();
+  clearTimeout(resize.timer);
+  resize.timer = setTimeout(onWindowShape, 250);
+}
+addEventListener('resize', resize);
 const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
 function angDiff(a, b) { let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; }
 function hash(a, b, c) { let h = (a * 374761393 + b * 668265263 + c * 1274126177) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967295; }
@@ -298,12 +316,12 @@ const nameOf = slot => { const r = roster.find(r => r.slot === slot); return r ?
 function buildGrid(L) {
   const g = []; for (let r = 0; r < ROWS; r++) g.push(new Array(COLS).fill(0));
   const code = { '.': 0, '#': 1, 'x': 2, 'o': 3 };
-  for (let r = 0; r < ROWS; r++) {
+  for (let r = 0; r < BASE_R; r++) {
     const row = (L.t[r] || '').padEnd(11, '.').slice(0, 11);
     for (let c = 0; c < 11; c++) {
       const v = code[row[c]] || 0;
-      g[r][c] = v;
-      if (L.m === 'h') g[r][COLS - 1 - c] = v; else g[ROWS - 1 - r][COLS - 1 - c] = v;
+      g[OY + r][OX + c] = v;
+      if (L.m === 'h') g[OY + r][OX + BASE_C - 1 - c] = v; else g[OY + BASE_R - 1 - r][OX + BASE_C - 1 - c] = v;
     }
   }
   return g;
@@ -323,12 +341,43 @@ function snap(c, r) {
 }
 
 // ---------- calques ----------
-const TS = 2;
-const floorCv = document.createElement('canvas'); floorCv.width = AW * TS; floorCv.height = AH * TS;
-const trackCv = document.createElement('canvas'); trackCv.width = AW * TS; trackCv.height = AH * TS;
-const tctx = trackCv.getContext('2d'); tctx.scale(TS, TS);
-(function buildFloor() {
-  const f = floorCv.getContext('2d'); f.scale(TS, TS);
+let TS = 2; // résolution des calques (réduite pour les très grandes arènes)
+const floorCv = document.createElement('canvas');
+let trackCv = document.createElement('canvas'), tctx = trackCv.getContext('2d'), arenaReady = false;
+// Change la taille de l'arène. La carte de base reste centrée ; les traces au sol sont conservées.
+function setArena(cols, rows) {
+  if (cols === COLS && rows === ROWS && arenaReady) return;
+  arenaReady = true;
+  const oldOX = OX, oldOY = OY, oldTrack = trackCv, oldTS = TS;
+  COLS = cols; ROWS = rows; AW = COLS * T; AH = ROWS * T; CW = AW; CH = AH + HUD;
+  OX = (COLS - BASE_C) / 2; OY = (ROWS - BASE_R) / 2;
+  TS = Math.min(2, 2600 / AW);
+  buildFloor();
+  trackCv = document.createElement('canvas'); trackCv.width = Math.ceil(AW * TS); trackCv.height = Math.ceil(AH * TS);
+  tctx = trackCv.getContext('2d');
+  if (oldTrack.width) tctx.drawImage(oldTrack, (OX - oldOX) * T * TS, (OY - oldOY) * T * TS, oldTrack.width * TS / oldTS, oldTrack.height * TS / oldTS);
+  tctx.setTransform(TS, 0, 0, TS, 0, 0);
+  layout();
+}
+// Agrandit l'arène en pleine partie : la grille et tout ce qui s'y trouve sont décalés d'autant.
+function growArena(cols, rows) {
+  cols = Math.max(cols, COLS); rows = Math.max(rows, ROWS);
+  if (cols === COLS && rows === ROWS) return;
+  const old = grid, dx = (cols - COLS) / 2, dy = (rows - ROWS) / 2;
+  setArena(cols, rows);
+  grid = []; for (let r = 0; r < ROWS; r++) grid.push(new Array(COLS).fill(0));
+  old.forEach((row, r) => row.forEach((v, c) => { grid[r + dy][c + dx] = v; }));
+  const px = dx * T, py = dy * T;
+  for (const o of [...tanks, ...bullets, ...mines, ...particles]) { o.x += px; o.y += py; }
+  for (const t of tanks) {
+    if (!t.ai) continue;
+    t.ai.lastX += px; t.ai.lastY += py;
+    if (t.ai.path) for (const w of t.ai.path) { w.x += px; w.y += py; }
+  }
+}
+function buildFloor() {
+  floorCv.width = Math.ceil(AW * TS); floorCv.height = Math.ceil(AH * TS);
+  const f = floorCv.getContext('2d'); f.setTransform(TS, 0, 0, TS, 0, 0);
   const g = f.createLinearGradient(0, 0, 0, AH); g.addColorStop(0, '#f0dcab'); g.addColorStop(1, '#e2c58c');
   f.fillStyle = g; f.fillRect(0, 0, AW, AH);
   for (let r = 0; r < ROWS; r++) {
@@ -341,7 +390,7 @@ const tctx = trackCv.getContext('2d'); tctx.scale(TS, TS);
       x += w;
     }
   }
-  for (let i = 0; i < 1000; i++) {
+  for (let i = 0; i < COLS * ROWS * 2.7; i++) {
     const yy = rand(0, AH), xx = rand(0, AW), len = rand(20, 90);
     f.strokeStyle = `rgba(140,95,45,${rand(0.03, 0.08)})`; f.lineWidth = rand(0.5, 1.4);
     f.beginPath(); f.moveTo(xx, yy);
@@ -351,7 +400,15 @@ const tctx = trackCv.getContext('2d'); tctx.scale(TS, TS);
   const v = f.createRadialGradient(AW / 2, AH / 2, AH * 0.35, AW / 2, AH / 2, AW * 0.72);
   v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(80,40,0,0.2)');
   f.fillStyle = v; f.fillRect(0, 0, AW, AH);
-})();
+}
+// fenêtre redimensionnée (ou plein écran) : on adapte l'arène
+function onWindowShape() {
+  const d = arenaDimsFor(innerWidth, innerHeight);
+  if (state === 'title' || state === 'lobby' || !grid.length) setArena(d.cols, d.rows);
+  else if (net.role !== 'client') growArena(d.cols, d.rows); // l'hôte décide pour tout le monde
+}
+// taille d'arène choisie au début de chaque mission ou manche
+function fitArenaToWindow() { const d = arenaDimsFor(innerWidth, innerHeight); setArena(d.cols, d.rows); }
 
 // ============================================================
 //  EFFETS  (exécutés localement ; l'hôte les relaie aux autres joueurs)
@@ -411,14 +468,15 @@ function startGame() {
 }
 function startMission() {
   const L = LEVELS[missionIdx];
+  fitArenaToWindow();
   grid = buildGrid(L);
   fx('reset');
   bullets = []; mines = [];
-  spawnPlayers([[2, 8], [2, 5], [2, 11], [4, 8]], false);
+  spawnPlayers([[2, 8], [2, 5], [2, 11], [4, 8]].map(([c, r]) => [c + OX, r + OY]), false);
   enemies = [];
   L.units.forEach((u, i) => {
     if (killedSet.has(i)) return;
-    const s = snap(u.c, u.r), e = makeTank(u.type, s.x, s.y);
+    const s = snap(u.c + OX, u.r + OY), e = makeTank(u.type, s.x, s.y);
     e.idx = i;
     const p = nearestPlayer(e.x, e.y) || { x: 0, y: AH / 2 };
     e.body = e.turret = e.ai.targetAngle = Math.atan2(p.y - e.y, p.x - e.x);
@@ -430,10 +488,12 @@ function startMission() {
 }
 function startRound() {
   round++;
+  fitArenaToWindow();
   grid = buildGrid(LEVELS[(Math.random() * LEVELS.length) | 0]);
   fx('reset');
   bullets = []; mines = []; enemies = [];
-  const spots = roster.length <= 2 ? [[2, 8], [19, 8]] : [[2, 2], [19, 14], [19, 2], [2, 14]];
+  const R = COLS - 3, B = ROWS - 3, M = Math.floor(ROWS / 2);
+  const spots = roster.length <= 2 ? [[2, M], [R, M]] : [[2, 2], [R, B], [R, 2], [2, B]];
   spawnPlayers(spots, true);
   tanks = [...players];
   roundWinner = -1;
@@ -594,7 +654,7 @@ function simShot(sh, a, tgt) {
   let b = sh.ty.bounces, len = 0, bounced = false;
   if (bulletBoxSolid(x, y, 4) || bulletSolid(sh.x + dx * 14, sh.y + dy * 14)) return { hit: false, ally: false, blocked: true };
   const step = 4;
-  while (len < 1500) {
+  while (len < 2200) {
     const nx = x + dx * step, ny = y + dy * step; len += step;
     if (bulletBoxSolid(nx, ny, 4)) {
       const hx = bulletBoxSolid(nx, y, 4), hy = bulletBoxSolid(x, ny, 4);
@@ -1024,8 +1084,9 @@ function drawNames() {
   if (!multi()) return;
   for (const p of players) if (p.alive) text(nameOf(p.slot), p.x, p.y - 30, 13, PCOL[p.slot].color, { stroke: 'rgba(20,10,0,.85)', sw: 4 });
 }
-function drawCursor() {
-  const x = mouse.x, y = mouse.y, col = PCOL[net.mySlot].dark;
+function drawCursor() { // dessiné en pixels écran : même taille quelle que soit l'arène
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+  const x = mouse.sx, y = mouse.sy, col = PCOL[net.mySlot].dark;
   ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(255,255,255,.85)';
   ctx.beginPath(); ctx.arc(x, y, 10, 0, TAU); ctx.stroke();
   ctx.lineWidth = 2.5; ctx.strokeStyle = col;
@@ -1056,7 +1117,7 @@ function drawHUD() {
   alive.forEach((e, i) => typeIcon(e.type, x0 + i * sp, cy, 0.62, Math.PI));
   slotIcon(net.mySlot, CW - 78, cy, 0.62, 0);
   text(`× ${lives}`, CW - 56, cy, 22, '#ffffff', { align: 'left', stroke: '#1a0f06', sw: 4 });
-  const hint = muted ? 'M : son coupé' : (net.role === 'solo' ? 'M : son   P : pause' : `Salon ${net.code}   M : son`);
+  const hint = muted ? 'M : son coupé' : (net.role === 'solo' ? 'M : son   P : pause   F : plein écran' : `Salon ${net.code}   M : son   F : plein écran`);
   text(hint, CW - 110, cy, 12, '#a88a64', { align: 'right', weight: 'normal' });
 }
 function drawBanner(title, sub, t, total, color1, color2) {
@@ -1096,6 +1157,11 @@ function endPrompt(y) {
 }
 function drawStats(title, color) {
   ctx.fillStyle = 'rgba(25,14,5,.82)'; ctx.fillRect(0, 0, AW, AH);
+  ctx.save(); ctx.translate(0, (AH - BASE_R * T) / 2); // contenu centré verticalement
+  drawStatsBody(title, color);
+  ctx.restore();
+}
+function drawStatsBody(title, color) {
   text(title, AW / 2, 95, 64, color, { stroke: '#1a0f06', sw: 10, font: '"Arial Black", "Trebuchet MS", sans-serif' });
   text(`Mission atteinte : ${Math.min(missionIdx + 1, LEVELS.length)} / ${LEVELS.length}     Record : ${best}`, AW / 2, 158, 22, '#f3e3c2');
   text('Chars détruits', AW / 2, 210, 24, '#ffd35a');
@@ -1119,6 +1185,11 @@ function drawStats(title, color) {
 }
 function drawVsEnd() {
   ctx.fillStyle = 'rgba(25,14,5,.84)'; ctx.fillRect(0, 0, AW, AH);
+  ctx.save(); ctx.translate(0, (AH - BASE_R * T) / 2);
+  drawVsEndBody();
+  ctx.restore();
+}
+function drawVsEndBody() {
   const ranked = [...roster].sort((a, b) => scores[b.slot] - scores[a.slot]);
   const w = ranked[0];
   text(`${w.name.toUpperCase()} GAGNE !`, AW / 2, 110, 56, PCOL[w.slot].color, { stroke: '#1a0f06', sw: 10, font: '"Arial Black", "Trebuchet MS", sans-serif' });
@@ -1136,12 +1207,20 @@ function drawVsEnd() {
 }
 function drawTitle() {
   ctx.fillStyle = 'rgba(40,20,0,.12)'; ctx.fillRect(0, 0, AW, AH);
+  // logo et décor dans le même cadre que les menus HTML
+  ctx.save();
+  const d = view.dpr;
+  ctx.setTransform(frame.s * d, 0, 0, frame.s * d, frame.x * d, frame.y * d);
+  const mx = (mouse.sx - frame.x) / frame.s, my = (mouse.sy - frame.y) / frame.s;
   const px = 120, py = 600;
-  drawTankShape(ctx, px, py, 0, Math.atan2(mouse.y - py, mouse.x - px), PCOL[0].color, PCOL[0].dark, time * 30, 0, true, true);
-  drawTankShape(ctx, 200, 640, 0, Math.atan2(mouse.y - 640, mouse.x - 200), PCOL[1].color, PCOL[1].dark, 0, 0, true, true);
+  drawTankShape(ctx, px, py, 0, Math.atan2(my - py, mx - px), PCOL[0].color, PCOL[0].dark, time * 30, 0, true, true);
+  drawTankShape(ctx, 200, 640, 0, Math.atan2(my - 640, mx - 200), PCOL[1].color, PCOL[1].dark, 0, 0, true, true);
   const deco = [['brown', 770, 590], ['green', 690, 635], ['purple', 810, 650]];
   for (const [ty, x, y] of deco) drawTankShape(ctx, x, y, Math.PI, Math.atan2(py - y, px - x) + Math.sin(time * 1.5 + x) * 0.2, TYPES[ty].color, TYPES[ty].dark, 0, 0, true);
-  const lx = AW / 2, ly = 110;
+  drawLogo(FRAME_W / 2, 110);
+  ctx.restore();
+}
+function drawLogo(lx, ly) {
   ctx.font = 'bold 120px "Arial Black", Impact, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (let i = 12; i > 0; i--) { ctx.fillStyle = i > 10 ? '#2a0a04' : '#7a1a0c'; ctx.fillText('TANKS!', lx + i * 0.6, ly + i); }
   const g = ctx.createLinearGradient(0, ly - 60, 0, ly + 60); g.addColorStop(0, '#ffe15a'); g.addColorStop(0.55, '#ff9b1f'); g.addColorStop(1, '#e0461a');
@@ -1151,8 +1230,10 @@ function drawTitle() {
   if (best && state === 'title') text(`Record solo : mission ${best}`, lx, 660, 15, '#5a3517');
 }
 function render() {
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  ctx.fillStyle = '#1b1611'; ctx.fillRect(0, 0, CW, CH);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#2a1b0f'; ctx.fillRect(0, 0, cv.width, cv.height);
+  layout();
+  ctx.setTransform(view.s, 0, 0, view.s, view.x, view.y);
   ctx.save();
   ctx.beginPath(); ctx.rect(0, 0, AW, AH); ctx.clip();
   if (shake > 0) ctx.translate(rand(-shake, shake), rand(-shake, shake));
@@ -1226,6 +1307,7 @@ function setStatus(id, msg) { $(id).textContent = msg || ''; }
 
 function goTitle(msg) {
   state = 'title'; paused = false; grid = []; tanks = []; players = []; enemies = []; bullets = []; mines = [];
+  fitArenaToWindow();
   showScreen('scrMain'); setStatus('mainStatus', msg || '');
 }
 $('btnSolo').onclick = () => {
@@ -1377,12 +1459,13 @@ function startOnline() {
 }
 function backToLobby() {
   state = 'lobby'; grid = []; tanks = []; players = []; enemies = []; bullets = []; mines = []; outbox = [];
+  fitArenaToWindow();
   showScreen('scrLobby');
   broadcastLobby();
 }
 function buildSnap() {
   const s = {
-    t: 's', st: state, sT: r2(stateT), mode: game.mode, mi: missionIdx, lv: lives, bn: bonusLife ? 1 : 0,
+    t: 's', st: state, sT: r2(stateT), mode: game.mode, mi: missionIdx, lv: lives, bn: bonusLife ? 1 : 0, c: COLS, r: ROWS,
     tk: tanks.filter(t => t.alive).map(t => [t.id, t.isPlayer ? t.slot : t.type, r1(t.x), r1(t.y), r2(t.body), r2(t.turret), r2(t.recoil), r2(tankAlpha(t))]),
     b: bullets.filter(b => !b.dead).map(b => [r1(b.x), r1(b.y), r2(b.dx), r2(b.dy), b.speed, b.rocket ? 1 : 0]),
     m: mines.map(m => [r1(m.x), r1(m.y), r2(m.fuse - m.t)]),
@@ -1458,6 +1541,13 @@ function newClientTank(id, who, x, y, body, turret) {
 function applySnap(s) {
   state = s.st; stateT = s.sT; game.mode = s.mode; missionIdx = s.mi; lives = s.lv; bonusLife = !!s.bn;
   kills = s.k || {}; totalKills = s.tkc || 0; pstats = s.pk || {}; scores = s.sc || scores; round = s.rd; roundWinner = s.rw;
+  if (s.c && (s.c !== COLS || s.r !== ROWS)) {
+    // l'hôte a changé la taille de l'arène : on décale ce qui est déjà affiché
+    const dx = (s.c - COLS) / 2 * T, dy = (s.r - ROWS) / 2 * T;
+    setArena(s.c, s.r);
+    for (const t of tanks) { t.x += dx; t.y += dy; }
+    for (const p of particles) { p.x += dx; p.y += dy; }
+  }
   if (s.g) grid = parseGrid(s.g);
   const seen = new Set();
   for (const a of s.tk) {
@@ -1520,7 +1610,7 @@ function clientFrame(dt) {
 //  ENTRÉES
 // ============================================================
 const keys = {};
-const mouse = { x: AW / 2, y: AH / 2 };
+const mouse = { x: AW / 2, y: AH / 2, sx: innerWidth / 2, sy: innerHeight / 2 };
 function localInput() {
   let ix = 0, iy = 0;
   if (!uiVisible()) {
@@ -1537,12 +1627,21 @@ addEventListener('keydown', e => {
   keys[e.code] = true;
   AC();
   if (e.code === 'KeyM') muted = !muted;
+  if (e.code === 'KeyF') toggleFullscreen();
   if ((e.code === 'KeyP' || e.code === 'Escape') && net.role === 'solo' && ['play', 'cleared', 'dead'].includes(state)) paused = !paused;
   if (e.code === 'Space' && canAct()) net.mineCount++;
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (state === 'play' && net.role === 'solo') paused = true; });
-function setMouse(e) { const r = cv.getBoundingClientRect(); mouse.x = (e.clientX - r.left) / r.width * CW; mouse.y = (e.clientY - r.top) / r.height * CH; }
+function mouseToWorld() { mouse.x = (mouse.sx * view.dpr - view.x) / view.s; mouse.y = (mouse.sy * view.dpr - view.y) / view.s; }
+function setMouse(e) { mouse.sx = e.clientX; mouse.sy = e.clientY; mouseToWorld(); }
+function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen();
+  } catch (e) {}
+}
+$('btnFull').onclick = toggleFullscreen;
 addEventListener('mousemove', setMouse);
 cv.addEventListener('mousedown', e => {
   setMouse(e); AC();
@@ -1567,6 +1666,7 @@ function runFrame(now) {
   // jusqu'à 0,25 s de rattrapage : l'hôte reste à l'heure même si son onglet ralentit
   const dt = Math.min(0.25, Math.max(0, (now - lastT) / 1000)); lastT = now;
   time += dt;
+  layout(); mouseToWorld();
   if (net.role === 'client') {
     if (state !== 'lobby' && state !== 'title') clientFrame(dt);
   } else if (state !== 'title' && state !== 'lobby') {
@@ -1594,6 +1694,7 @@ requestAnimationFrame(loop);
   } catch (e) { setInterval(tick, 16); }
 })();
 
+resize();
 goTitle();
 
 // petit accès de débogage : tanksDebug.go(12) lance la mission 12 en solo
