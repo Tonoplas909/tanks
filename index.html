@@ -15,6 +15,7 @@
   }
   html,body{margin:0;height:100%;background:var(--bg);overflow:hidden}
   canvas{position:fixed;left:0;top:0;display:block;cursor:none}
+  body.menu canvas{cursor:default}  /* dans les menus : curseur normal partout */
   #ui{position:fixed;inset:0;pointer-events:none;overflow:hidden}
   #uiInner{position:absolute;left:0;top:0;width:880px;height:732px;transform-origin:0 0;font-family:var(--ui);color:var(--text);-webkit-font-smoothing:antialiased}
   .screen{display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;padding-top:170px;box-sizing:border-box}
@@ -1491,6 +1492,7 @@ function render() {
 const $ = id => document.getElementById(id);
 function showScreen(id) {
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('on', s.id === id);
+  document.body.classList.toggle('menu', !!id);
 }
 const uiVisible = () => !!document.querySelector('.screen.on');
 function myName() {
