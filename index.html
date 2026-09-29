@@ -64,6 +64,8 @@
   .hint{font-size:12.5px;color:var(--muted);margin:0;line-height:1.55}
   .keys{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 12px;font-size:12px;color:var(--muted)}
   kbd{font:600 11px var(--ui);color:var(--text);background:rgba(255,255,255,.08);border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;padding:1px 6px;margin-right:3px}
+  .version{margin:2px 0 0;font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.5px}
+  .version b{color:var(--accent);font-weight:700}
   .label{font-size:11px;font-weight:600;color:var(--muted);text-align:left;margin-bottom:-4px;text-transform:uppercase;letter-spacing:1.2px}
 </style>
 </head>
@@ -81,6 +83,7 @@
         <p class="status" id="mainStatus"></p>
         <div class="divider"></div>
         <div class="keys"><span><kbd>ZQSD</kbd>bouger</span><span><kbd>Souris</kbd>viser</span><span><kbd>Clic</kbd>tirer</span><span><kbd>Clic droit</kbd>mine</span><span><kbd>M</kbd>son</span><span><kbd>P</kbd>pause</span><span><kbd>F</kbd>plein écran</span></div>
+        <p class="version" id="version"></p>
       </div>
     </div>
     <div class="screen" id="scrJoin">
@@ -240,6 +243,8 @@ const PCOL = [
   { color: '#36c7e0', dark: '#146f80', label: 'Cyan' },
 ];
 const VS_WIN = 5;
+// numéro de version affiché dans le menu : à augmenter à chaque mise en ligne
+const VERSION = '1.4', VERSION_NOTE = 'connexion réseau améliorée';
 
 // ============================================================
 //  MISSIONS
@@ -1481,7 +1486,7 @@ function render() {
   if (!menu && grid.length) drawHUD();
   else {
     ctx.fillStyle = '#0b0f1a'; ctx.fillRect(0, AH, CW, HUD);
-    text('Inspiré de « Tanks! » — Wii Play (Nintendo, 2006)  ·  projet de fan non officiel', CW / 2, AH + HUD / 2, 12, '#4b5570', { weight: '500' });
+    text(`v${VERSION}  ·  Inspiré de « Tanks! » — Wii Play (Nintendo, 2006)  ·  projet de fan non officiel`, CW / 2, AH + HUD / 2, 12, '#4b5570', { weight: '500' });
   }
   if (!uiVisible()) drawCursor();
 }
@@ -1502,6 +1507,7 @@ function myName() {
 try { $('name').value = localStorage.getItem('tanks_name') || ''; } catch (e) {}
 $('name').addEventListener('input', () => { try { localStorage.setItem('tanks_name', $('name').value); } catch (e) {} });
 function setStatus(id, msg) { $(id).textContent = msg || ''; }
+$('version').innerHTML = `Version <b>${VERSION}</b> · ${VERSION_NOTE}`;
 
 function goTitle(msg) {
   state = 'title'; paused = false; grid = []; tanks = []; players = []; enemies = []; bullets = []; mines = [];
@@ -1577,6 +1583,44 @@ function loadPeer() {
     document.head.appendChild(s);
   });
 }
+// Serveurs STUN : celui de Google (défaut de PeerJS, port 19302) est bloqué sur certains réseaux
+// d'entreprise, et le relais TURN de PeerJS ne répond plus. Cloudflare (3478) et Metered (80) passent.
+const PEER_OPTS = {
+  debug: 0,
+  config: { iceServers: [
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    { urls: 'stun:stun.l.google.com:19302' },
+  ] },
+};
+const NET_BLOCKED = 'Connexion directe impossible entre vos deux PC : le réseau la bloque (fréquent sur un réseau d’entreprise ou un Wi-Fi invité).';
+// Surveille la connexion directe (ICE) d'une connexion PeerJS : progression et échec.
+function watchIce(conn, onState, onFail) {
+  let tries = 0, failed = false;
+  const attach = () => {
+    const pc = conn.peerConnection;
+    if (!pc) { if (++tries < 100) setTimeout(attach, 100); return; }
+    // l'autre côté a répondu à la mise en relation : le salon existe bien
+    pc.addEventListener('signalingstatechange', () => { if (pc.remoteDescription && onState) onState('answered'); });
+    pc.addEventListener('iceconnectionstatechange', async () => {
+      const st = pc.iceConnectionState;
+      if (onState) onState(st);
+      if (st === 'failed' && !failed) { failed = true; onFail(await iceSummary(pc)); }
+    });
+  };
+  attach();
+}
+// Types de chemins réseau trouvés de chaque côté (host = réseau local, srflx = via Internet, relay = relais)
+async function iceSummary(pc) {
+  try {
+    const loc = new Set(), rem = new Set();
+    (await pc.getStats()).forEach(s => {
+      if (s.type === 'local-candidate') loc.add(s.candidateType);
+      if (s.type === 'remote-candidate') rem.add(s.candidateType);
+    });
+    return `Détail : ici ${[...loc].join('/') || 'aucun'}, en face ${[...rem].join('/') || 'aucun'}.`;
+  } catch (e) { return ''; }
+}
 function genCode() { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 5; i++) s += A[(Math.random() * A.length) | 0]; return s; }
 function cleanupNet() {
   const p = net.peer;
@@ -1595,7 +1639,7 @@ async function hostGame() {
   try { await loadPeer(); } catch (e) { goTitle(e.message); return; }
   const tryOpen = (attempt) => {
     const code = genCode();
-    const peer = new Peer(PREFIX + code, { debug: 0 });
+    const peer = new Peer(PREFIX + code, PEER_OPTS);
     net.peer = peer;
     peer.on('open', () => {
       if (net.peer !== peer) return;
@@ -1603,6 +1647,13 @@ async function hostGame() {
       renderLobby();
     });
     peer.on('connection', conn => {
+      watchIce(conn,
+        st => { if ((st === 'answered' || st === 'checking') && state === 'lobby') setStatus('lobbyStatus', 'Un joueur se connecte…'); },
+        detail => { if (state === 'lobby') setStatus('lobbyStatus', 'Un joueur a trouvé le salon, mais ' + NET_BLOCKED.charAt(0).toLowerCase() + NET_BLOCKED.slice(1) + ' ' + detail); });
+      setTimeout(() => {
+        if (net.peer === peer && state === 'lobby' && !roster.some(r => r.conn === conn))
+          setStatus('lobbyStatus', 'Un joueur a trouvé le salon, mais ' + NET_BLOCKED.charAt(0).toLowerCase() + NET_BLOCKED.slice(1));
+      }, 20000);
       conn.on('data', d => hostOnData(conn, d));
       conn.on('close', () => hostDrop(conn));
       conn.on('error', () => hostDrop(conn));
@@ -1684,12 +1735,18 @@ async function joinGame(code) {
   $('btnJoinGo').disabled = true;
   const fail = msg => { $('btnJoinGo').disabled = false; cleanupNet(); setStatus('joinStatus', msg); };
   try { await loadPeer(); } catch (e) { fail(e.message); return; }
-  const peer = new Peer({ debug: 0 });
+  const peer = new Peer(PEER_OPTS);
   net.peer = peer;
-  const timeout = setTimeout(() => { if (net.peer === peer && net.role !== 'client') fail('Pas de réponse du salon. Vérifie le code.'); }, 15000);
+  let iceStarted = false; // le salon a répondu et la connexion directe est en cours
+  const timeout = setTimeout(() => {
+    if (net.peer === peer && net.role !== 'client') fail(iceStarted ? NET_BLOCKED : 'Pas de réponse du salon. Vérifie le code.');
+  }, 20000);
   peer.on('open', () => {
     const conn = peer.connect(PREFIX + code, { reliable: true, serialization: 'json' });
     net.hostConn = conn;
+    watchIce(conn,
+      st => { if ((st === 'answered' || st === 'checking') && net.peer === peer && !iceStarted) { iceStarted = true; setStatus('joinStatus', 'Salon trouvé, connexion directe en cours…'); } },
+      detail => { if (net.peer === peer && net.role !== 'client') { clearTimeout(timeout); fail(NET_BLOCKED + ' ' + detail); } });
     conn.on('open', () => conn.send({ t: 'hello', name: myName() }));
     conn.on('data', d => { if (d && d.t === 'welcome') { clearTimeout(timeout); $('btnJoinGo').disabled = false; } clientOnData(d); });
     conn.on('close', () => { if (net.hostConn === conn && net.role === 'client') { cleanupNet(); goTitle("La connexion avec l'hôte a été perdue."); } });
@@ -1698,7 +1755,9 @@ async function joinGame(code) {
     if (net.peer !== peer) return;
     clearTimeout(timeout);
     if (net.role === 'client') { cleanupNet(); goTitle('Erreur réseau (' + err.type + ').'); }
-    else fail(err.type === 'peer-unavailable' ? 'Salon introuvable. Vérifie le code.' : 'Erreur réseau (' + err.type + ').');
+    else if (err.type === 'peer-unavailable') fail('Salon introuvable. Vérifie le code.');
+    else if (err.type === 'webrtc' || err.type === 'negotiation-failed') fail(NET_BLOCKED);
+    else fail('Erreur réseau (' + err.type + ').');
   });
 }
 function clientOnData(d) {
